@@ -1,0 +1,16 @@
+============================================================
+TRAINING SUMMARY
+============================================================
+
+Total epochs: 15
+Best train loss: 3.3869 (Epoch 15)
+Best val loss: 3.4331 (Epoch 15)
+Final train loss: 3.3869
+Final val loss: 3.4331
+
+Train loss change: -37.7%
+Val loss change: -27.8%
+
+Test BLEU-4 Score: 0.2457
+
+============================================================

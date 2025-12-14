@@ -1,4 +1,14 @@
+"""
+train.py - Image Captioning with CNN-LSTM and Attention
 
+Train an image captioning model on Flickr8k dataset.
+Based on "Show, Attend and Tell" architecture.
+
+Optimized for NVIDIA RTX 4080 GPU
+
+Usage:
+    python train.py
+"""
 
 import os
 import re
@@ -16,6 +26,9 @@ from torchvision import transforms, models
 
 from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 from tqdm import tqdm
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+import matplotlib.pyplot as plt
 
 
 ########################################
@@ -43,14 +56,14 @@ class Config:
     decoder_dim = 512
     attention_dim = 256
 
-    # Training hyperparameters
-    batch_size = 64
-    num_workers = 4
+    # Training hyperparameters - OPTIMIZED FOR RTX 4080
+    batch_size = 64        # Increased from 64 (12GB VRAM!)
+    num_workers = 8         # Parallel data loading
     lr = 1e-4
-    num_epochs = 10
+    num_epochs = 15
     grad_clip = 5.0
     
-    # Device
+    # Device - Auto-detects GPU
     device = (
         "cuda" if torch.cuda.is_available()
         else "mps" if torch.backends.mps.is_available()
@@ -64,6 +77,90 @@ class Config:
     unk_token = "<unk>"
 
 cfg = Config()
+
+
+########################################
+# Plotting Functions
+########################################
+
+def plot_training_curves(epochs, train_losses, val_losses, save_path='training_curves.png'):
+    """Plot and save training curves"""
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+    
+    # Plot 1: Loss curves
+    axes[0].plot(epochs, train_losses, 'b-o', label='Train Loss', linewidth=2, markersize=6)
+    axes[0].plot(epochs, val_losses, 'r-o', label='Val Loss', linewidth=2, markersize=6)
+    axes[0].set_xlabel('Epoch', fontsize=13, fontweight='bold')
+    axes[0].set_ylabel('Loss', fontsize=13, fontweight='bold')
+    axes[0].set_title('Training and Validation Loss', fontsize=15, fontweight='bold')
+    axes[0].legend(fontsize=12, loc='upper right')
+    axes[0].grid(True, alpha=0.3, linestyle='--')
+    axes[0].set_xlim(left=0)
+    
+    # Add values on last few points
+    for i, (e, tl, vl) in enumerate(zip(epochs[-3:], train_losses[-3:], val_losses[-3:])):
+        axes[0].annotate(f'{tl:.3f}', (e, tl), textcoords="offset points", 
+                        xytext=(0,10), ha='center', fontsize=9, color='blue')
+        axes[0].annotate(f'{vl:.3f}', (e, vl), textcoords="offset points", 
+                        xytext=(0,-15), ha='center', fontsize=9, color='red')
+    
+    # Plot 2: Improvement over time
+    if len(epochs) > 1:
+        train_improvement = [(train_losses[0] - loss) / train_losses[0] * 100 
+                            for loss in train_losses]
+        val_improvement = [(val_losses[0] - loss) / val_losses[0] * 100 
+                          for loss in val_losses]
+        
+        axes[1].plot(epochs, train_improvement, 'b-o', label='Train Improvement', 
+                    linewidth=2, markersize=6)
+        axes[1].plot(epochs, val_improvement, 'r-o', label='Val Improvement', 
+                    linewidth=2, markersize=6)
+        axes[1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+        axes[1].set_xlabel('Epoch', fontsize=13, fontweight='bold')
+        axes[1].set_ylabel('Improvement (%)', fontsize=13, fontweight='bold')
+        axes[1].set_title('Loss Reduction from Epoch 1', fontsize=15, fontweight='bold')
+        axes[1].legend(fontsize=12, loc='lower right')
+        axes[1].grid(True, alpha=0.3, linestyle='--')
+        axes[1].set_xlim(left=0)
+        
+        # Add final improvement values
+        final_train_imp = train_improvement[-1]
+        final_val_imp = val_improvement[-1]
+        axes[1].text(0.95, 0.05, f'Final Train: {final_train_imp:.1f}%\nFinal Val: {final_val_imp:.1f}%',
+                    transform=axes[1].transAxes, fontsize=11, verticalalignment='bottom',
+                    horizontalalignment='right', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ Saved plot: {save_path}")
+
+
+def save_training_summary(epochs, train_losses, val_losses, bleu_score=None):
+    """Save training summary to text file"""
+    with open('training_summary.txt', 'w') as f:
+        f.write("="*60 + "\n")
+        f.write("TRAINING SUMMARY\n")
+        f.write("="*60 + "\n\n")
+        
+        f.write(f"Total epochs: {len(epochs)}\n")
+        f.write(f"Best train loss: {min(train_losses):.4f} (Epoch {epochs[train_losses.index(min(train_losses))]})\n")
+        f.write(f"Best val loss: {min(val_losses):.4f} (Epoch {epochs[val_losses.index(min(val_losses))]})\n")
+        f.write(f"Final train loss: {train_losses[-1]:.4f}\n")
+        f.write(f"Final val loss: {val_losses[-1]:.4f}\n\n")
+        
+        if len(epochs) > 1:
+            train_change = ((train_losses[-1] - train_losses[0]) / train_losses[0]) * 100
+            val_change = ((val_losses[-1] - val_losses[0]) / val_losses[0]) * 100
+            f.write(f"Train loss change: {train_change:+.1f}%\n")
+            f.write(f"Val loss change: {val_change:+.1f}%\n\n")
+        
+        if bleu_score is not None:
+            f.write(f"Test BLEU-4 Score: {bleu_score:.4f}\n\n")
+        
+        f.write("="*60 + "\n")
+    
+    print(f"  ✓ Saved summary: training_summary.txt")
 
 
 ########################################
@@ -146,7 +243,9 @@ def load_captions(captions_file):
     image2caps = {}
     all_pairs = []
 
-    with open(captions_file, "r") as f:
+    print(f"Loading captions from: {captions_file}")
+
+    with open(captions_file, "r", encoding="utf-8") as f:
         for line in f:
             if not line.strip():
                 continue
@@ -167,6 +266,7 @@ def load_captions(captions_file):
             image2caps.setdefault(img_name, []).append(caption)
             all_pairs.append((img_name, caption))
 
+    print(f"Loaded {len(all_pairs)} captions for {len(image2caps)} images")
     return image2caps, all_pairs
 
 
@@ -483,18 +583,24 @@ def create_dataloaders():
 
     collate = CaptionCollate(pad_idx=cfg.pad_token_id)
 
-    # Dataloaders
+    # Dataloaders - GPU optimized with pin_memory
     train_loader = DataLoader(
         train_dataset, batch_size=cfg.batch_size, shuffle=True,
-        num_workers=cfg.num_workers, collate_fn=collate
+        num_workers=cfg.num_workers, collate_fn=collate,
+        pin_memory=True,  # Faster GPU transfer
+        persistent_workers=True  # Keep workers alive
     )
     val_loader = DataLoader(
         val_dataset, batch_size=cfg.batch_size, shuffle=False,
-        num_workers=cfg.num_workers, collate_fn=collate
+        num_workers=cfg.num_workers, collate_fn=collate,
+        pin_memory=True,
+        persistent_workers=True
     )
     test_loader = DataLoader(
         test_dataset, batch_size=cfg.batch_size, shuffle=False,
-        num_workers=cfg.num_workers, collate_fn=collate
+        num_workers=cfg.num_workers, collate_fn=collate,
+        pin_memory=True,
+        persistent_workers=True
     )
 
     return train_loader, val_loader, test_loader, vocab, image2caps, test_pairs
@@ -699,9 +805,15 @@ def evaluate_bleu_on_test(encoder, decoder, vocab, image2caps, test_pairs):
 def main():
     """Main training function"""
     print("="*60)
-    print("Image Captioning Training")
+    print("Image Captioning Training - RTX 4080 Optimized")
     print("="*60)
     print(f"Device: {cfg.device}")
+    
+    # Display GPU info if available
+    if cfg.device == "cuda":
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+    
     print(f"Batch size: {cfg.batch_size}")
     print(f"Epochs: {cfg.num_epochs}")
     print(f"Learning rate: {cfg.lr}")
@@ -729,6 +841,11 @@ def main():
     optimizer = optim.Adam(params, lr=cfg.lr)
 
     best_val_loss = float("inf")
+    
+    # Track training history
+    epochs_list = []
+    train_losses = []
+    val_losses = []
 
     # Training loop
     for epoch in range(1, cfg.num_epochs + 1):
@@ -740,6 +857,14 @@ def main():
         print(f"\nEpoch {epoch}/{cfg.num_epochs}")
         print(f"  Train Loss: {train_loss:.4f}")
         print(f"  Val Loss:   {val_loss:.4f}")
+        
+        # Track losses
+        epochs_list.append(epoch)
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
+        
+        # Plot progress
+        plot_training_curves(epochs_list, train_losses, val_losses)
 
         # Save best model
         if val_loss < best_val_loss:
@@ -768,10 +893,15 @@ def main():
     print("Training complete! Evaluating on test set...")
     print("="*60)
     
-    evaluate_bleu_on_test(encoder, decoder, vocab, image2caps, test_pairs)
+    bleu_score = evaluate_bleu_on_test(encoder, decoder, vocab, image2caps, test_pairs)
+    
+    # Save final summary
+    save_training_summary(epochs_list, train_losses, val_losses, bleu_score)
 
     print("\n✓ Training finished!")
-    print(f"Best model saved to: best_model.pth")
+    print(f"✓ Best model saved to: best_model.pth")
+    print(f"✓ Training curves saved to: training_curves.png")
+    print(f"✓ Summary saved to: training_summary.txt")
 
 
 if __name__ == "__main__":
