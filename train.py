@@ -1,12 +1,4 @@
-"""
-train.py - Image Captioning with CNN-LSTM and Attention
 
-Train an image captioning model on Flickr8k dataset.
-Based on "Show, Attend and Tell" architecture.
-
-Usage:
-    python train.py
-"""
 
 import os
 import re
