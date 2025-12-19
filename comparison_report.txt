@@ -1,0 +1,44 @@
+
+================================================================================
+IMAGE CAPTIONING: BASELINE VS ATTENTION - FINAL REPORT
+================================================================================
+
+DATASET:
+  Dataset: Flickr8k
+  Training samples: 32364
+  Validation samples: 4045
+  Test samples: 4046
+  Vocabulary size: 2662
+
+TRAINING CONFIGURATION:
+  Device: cuda
+  Batch size: 64
+  Epochs: 10
+  Learning rate: 0.0001
+  Encoder: ResNet-50 (pre-trained)
+  Decoder hidden size: 512
+
+BASELINE MODEL (No Attention):
+  Architecture: CNN -> Global Pool -> LSTM
+  Final Train Loss: 2.7812
+  Final Val Loss: 2.7413
+  Best Val Loss: 2.7413
+
+ATTENTION MODEL:
+  Architecture: CNN -> Spatial Features -> LSTM + Bahdanau Attention
+  Final Train Loss: 3.6085
+  Final Val Loss: 3.5850
+  Best Val Loss: 3.5850
+
+PERFORMANCE IMPROVEMENT:
+  Absolute Val Loss Improvement: -0.8437
+  Relative Improvement: -30.78%
+  Result: Attention mechanism does not improve performance
+
+FILES SAVED:
+  - baseline_model.pth (Baseline weights)
+  - attention_model.pth (Attention weights)
+  - training_comparison.png (Loss curves)
+  - comparison_report.txt (This file)
+
+================================================================================
